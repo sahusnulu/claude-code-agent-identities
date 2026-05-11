@@ -1,0 +1,83 @@
+{
+  "_comment": "Example Claude Code settings.json. Copy the hooks block and the CLAUDE_AGENT_NAME=reviewer permissions into your project's .claude/settings.json. Adjust the Stop-hook remote URL for your repo.",
+  "permissions": {
+    "allow": [
+      "Bash(git status*)",
+      "Bash(git diff*)",
+      "Bash(git log*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push)",
+      "Bash(git push -u origin *)",
+      "Bash(git push origin *)",
+      "Bash(gh pr create*)",
+      "Bash(gh pr comment*)",
+      "Bash(gh pr review*)",
+      "Bash(gh pr view*)",
+      "Bash(gh issue view*)",
+      "Bash(gh issue comment*)",
+      "Bash(CLAUDE_AGENT_NAME=reviewer gh pr comment*)",
+      "Bash(CLAUDE_AGENT_NAME=reviewer gh pr review*)",
+      "Bash(CLAUDE_AGENT_NAME=reviewer gh issue comment*)"
+    ],
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push --force-with-lease*)",
+      "Bash(git push --delete*)",
+      "Bash(git branch -D*)",
+      "Bash(gh pr close*)",
+      "Bash(gh pr merge*)",
+      "Bash(gh issue close*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "~/.scripts/agent-git-setup.sh implementer $CLAUDE_PROJECT_DIR"
+          },
+          {
+            "type": "command",
+            "if": "Bash(git push*)",
+            "command": "~/.scripts/agent-git-setup.sh implementer $CLAUDE_PROJECT_DIR"
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh pr create*)",
+            "command": "~/.scripts/agent-git-setup.sh implementer $CLAUDE_PROJECT_DIR"
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh pr comment*)",
+            "command": "~/.scripts/agent-git-setup-dispatch.sh"
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh pr review*)",
+            "command": "~/.scripts/agent-git-setup-dispatch.sh"
+          },
+          {
+            "type": "command",
+            "if": "Bash(gh issue comment*)",
+            "command": "~/.scripts/agent-git-setup-dispatch.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd $CLAUDE_PROJECT_DIR && GITDIR=$(git rev-parse --git-dir) && git config --unset user.name 2>/dev/null; git config --unset user.email 2>/dev/null; git config --unset credential.helper 2>/dev/null; rm -f \"$GITDIR/agent-credential-helper.sh\"; git remote set-url origin https://github.com/your-org/your-repo.git; gh auth logout --hostname github.com 2>/dev/null"
+          }
+        ]
+      }
+    ]
+  }
+}
