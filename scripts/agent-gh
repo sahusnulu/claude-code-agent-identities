@@ -1,0 +1,31 @@
+#!/bin/bash
+# Per-call gh wrapper that mints a fresh installation token for the named
+# agent and execs gh with GH_TOKEN set. Use in worktree mode (and any other
+# context) to avoid persistent gh auth state.
+#
+# Usage: agent-gh <agent-name> <gh args...>
+set -euo pipefail
+AGENT="${1:?usage: $0 <agent-name> <gh-args...>}"
+shift
+CONFIG="$HOME/.secrets/agents/$AGENT.env"
+[ -f "$CONFIG" ] || { echo "No config for '$AGENT' at $CONFIG" >&2; exit 1; }
+# shellcheck disable=SC1090
+source "$CONFIG"
+for var in APP_ID INSTALLATION_ID PRIVATE_KEY_PATH; do
+  [ -n "${!var:-}" ] || { echo "Missing $var in $CONFIG" >&2; exit 1; }
+done
+[ -f "$PRIVATE_KEY_PATH" ] || { echo "Private key not found at $PRIVATE_KEY_PATH" >&2; exit 1; }
+JWT=$(python3 - <<EOF
+import jwt, time, pathlib
+key = pathlib.Path("$PRIVATE_KEY_PATH").read_text()
+now = int(time.time())
+print(jwt.encode({"iat": now - 60, "exp": now + 600, "iss": "$APP_ID"}, key, algorithm="RS256"))
+EOF
+)
+TOKEN=$(curl -s -X POST \
+  -H "Authorization: Bearer $JWT" \
+  -H "Accept: application/vnd.github+json" \
+  "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" \
+  | jq -r .token)
+[ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || { echo "Failed to mint token for $AGENT" >&2; exit 1; }
+exec env GH_TOKEN="$TOKEN" gh "$@"

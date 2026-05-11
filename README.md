@@ -30,7 +30,8 @@ This repo documents how to set it up. It assumes you're using [Claude Code](http
 ~/.scripts/
 ├── agent-git-setup.sh           # mints an installation token, configures git + gh
 ├── agent-git-setup-dispatch.sh  # picks identity based on CLAUDE_AGENT_NAME prefix
-└── agent-git-setup-worktree.sh  # worktree-scoped variant; see "parallel worktrees" section
+├── agent-git-setup-worktree.sh  # worktree-scoped variant; see "parallel worktrees" section
+└── agent-gh                     # per-call gh wrapper used by the worktree variant
 
 <your-repo>/.claude/
 ├── settings.json             # PreToolUse hooks that invoke the setup scripts
@@ -49,6 +50,7 @@ The directory layout in this repo mirrors the production layout above, so each f
 | `scripts/agent-git-setup.sh` | `~/.scripts/agent-git-setup.sh` |
 | `scripts/agent-git-setup-dispatch.sh` | `~/.scripts/agent-git-setup-dispatch.sh` |
 | `scripts/agent-git-setup-worktree.sh` | `~/.scripts/agent-git-setup-worktree.sh` (only if using the [worktree variant](#running-parallel-claude-code-sessions-across-worktrees)) |
+| `scripts/agent-gh` | `~/.scripts/agent-gh` (only if using the [worktree variant](#running-parallel-claude-code-sessions-across-worktrees)) |
 | `agent-envs/implementer.env.example` | `~/.secrets/agents/implementer.env` (drop the `.example` suffix, fill in real values) |
 | `agent-envs/reviewer.env.example` | `~/.secrets/agents/reviewer.env` |
 
@@ -246,6 +248,8 @@ The `Stop` hook tears down the bot identity at the end of every Claude Code sess
   CLAUDE_AGENT_NAME=reviewer gh pr comment 42 --body "LGTM"
   ```
 
+> The `CLAUDE_AGENT_NAME=<name>` prefix convention above is the **basic-mode** mechanism. In the [worktree variant](#running-parallel-claude-code-sessions-across-worktrees), `gh` calls instead go through `~/.scripts/agent-gh <name> ...` — the agent name is the wrapper's first argument and identity is resolved per call, so no prefix-routed hook is needed for `gh`. Both modes still use the `CLAUDE_AGENT_NAME=` prefix for hook-routed `git` commands (commits/pushes) when dispatch is wired in.
+
 ### Where to remind the agent to prefix
 
 The prefix has to come from the agent itself - the hook reads it, it doesn't add it. So the instruction has to live somewhere the agent reads at the start of every session. You have two homes for it:
@@ -359,47 +363,57 @@ The differences from `agent-git-setup.sh`:
 
 - All `git config` calls become `git config --worktree`, so `user.name`, `user.email`, `credential.helper`, and `remote.origin.url` land in `<main-repo>/.git/worktrees/<name>/config.worktree` instead of the shared `.git/config`.
 - The credential helper is written into the worktree's per-worktree git dir (already per-worktree in the basic script — no change in behavior, just clarified by the per-worktree config keys above).
-- `gh` is authenticated into a per-worktree `GH_CONFIG_DIR` at `<git-dir>/gh-config` rather than the shared `~/.config/gh`. The script runs `gh auth login --with-token` with `GH_CONFIG_DIR` pointed at that path, so each worktree gets its own `hosts.yml`. For this to actually reach tool subprocesses, you also need step 3.
+- `gh` auth is not touched by this script — `gh` calls in worktree mode go through the `agent-gh` wrapper installed in step 3.
 
-#### 3. Launch `claude` with `GH_CONFIG_DIR` set per worktree
+#### 3. Use the `agent-gh` wrapper for `gh` calls
 
-PreToolUse hooks run in their own shell that exits before Claude Code spawns the actual tool subprocess, so a hook can't put env vars into the `gh` call that triggered it. The fix is to set `GH_CONFIG_DIR` *before* `claude` starts — Claude Code's tool subprocesses then inherit it for free, and `gh` reads its auth from the per-worktree path natively.
+`gh` auth state is global by default (`~/.config/gh/hosts.yml`), so parallel worktree sessions can't safely share it. Rather than try to scope a per-worktree config dir into every tool subprocess via env-var plumbing, the worktree variant takes the opposite approach: a tiny per-call wrapper that mints a fresh installation token on each invocation and execs `gh` with `GH_TOKEN` set. No persistent `gh` state, no `Stop`-hook teardown, no shell function around `claude`, works with `claude -w <branch>` and any other launch mode.
 
-Add a `claude` shell function to your `~/.zshrc` (or `~/.bashrc`):
-
-```bash
-claude() {
-  local d
-  if d=$(git rev-parse --absolute-git-dir 2>/dev/null); then
-    GH_CONFIG_DIR="$d/gh-config" command claude "$@"
-  else
-    command claude "$@"
-  fi
-}
-```
-
-Now whenever you launch `claude` from inside a worktree, that session's `gh` calls — including ones routed through the hook — use the per-worktree `hosts.yml`. Outside a git repo the function is a no-op passthrough.
-
-To verify before launching a session:
+Install it once:
 
 ```bash
-cd ~/repos/my-feature-worktree
-echo "$(git rev-parse --absolute-git-dir)/gh-config"   # this is the path
-claude
-# Inside claude, ask it to run: gh auth status
-# → Logged in to github.com as <bot> (oauth_token) — config /path/from/above
+cp scripts/agent-gh ~/.scripts/
+chmod +x ~/.scripts/agent-gh
 ```
 
-If `gh auth status` reports the path you expected, isolation is wired up. If it reports your own user or points at `~/.config/gh`, the function didn't run before `claude` was exec'd — check that the function is sourced in your interactive shell and that you launched `claude` from inside the worktree.
+Agents invoke it explicitly, with the agent name as the first argument:
 
-> The setup script warns loudly if it's invoked under a `GH_CONFIG_DIR` that doesn't match the worktree's path, so missing-launch-wrapper mistakes fail with a visible message rather than silently routing to the wrong identity.
+```bash
+~/.scripts/agent-gh reviewer    pr comment 42 --body "LGTM"
+~/.scripts/agent-gh implementer pr create  --title "..." --body "..."
+~/.scripts/agent-gh implementer auth status
+```
+
+> **Cost:** each call mints a fresh JWT and exchanges it for an installation token over the GitHub API — roughly **300–500ms of network overhead per invocation**. For interactive comment/review flows this is invisible; for a script that calls `gh` in a tight loop, batch the work into a single call or cache `GH_TOKEN` for the loop's lifetime.
+
+Update `.claude/settings.json` for worktree mode in two ways:
+
+1. **Permissions** — replace the basic-mode `Bash(CLAUDE_AGENT_NAME=… gh …*)` entries with the wrapper form:
+
+   ```jsonc
+   {
+     "permissions": {
+       "allow": [
+         "Bash(~/.scripts/agent-gh reviewer pr comment*)",
+         "Bash(~/.scripts/agent-gh reviewer pr review*)",
+         "Bash(~/.scripts/agent-gh reviewer issue comment*)",
+         "Bash(~/.scripts/agent-gh implementer pr create*)"
+         // ...same shape for any other agent + gh subcommand pair
+       ]
+     }
+   }
+   ```
+
+2. **Hooks** — the basic-mode `gh pr create*` / `gh pr comment*` / `gh pr review*` / `gh issue comment*` `PreToolUse` hooks are no longer needed. The wrapper resolves identity per call, so there's nothing for a hook to set up. Keep the `git commit*` and `git push*` hooks pointing at `agent-git-setup-worktree.sh`; drop the `gh`-shaped ones entirely.
+
+The wrapper also reads its config from `~/.secrets/agents/<name>.env` (same files the setup scripts use), so no extra credential plumbing is required — install the wrapper, copy the permissions, and any agent already wired for basic mode will work.
 
 #### 4. Drop or scope the Stop hook
 
 The default Stop hook unsets shared config keys. Either:
 
 - **Remove it entirely** when you're using the worktree-safe script — cleanup matters less because nothing leaks across worktrees, and the worktree's `config.worktree` will simply be overwritten next session.
-- **Or scope it**: change every `git config --unset <key>` to `git config --unset --worktree <key>`, drop the `git remote set-url` line (since the remote URL is now per-worktree too), drop the `gh auth logout` line (the worktree variant never touches global gh config), and add `rm -rf "$GITDIR/gh-config"` so the bot's `hosts.yml` doesn't sit around on disk after the session ends.
+- **Or scope it**: change every `git config --unset <key>` to `git config --unset --worktree <key>`, drop the `git remote set-url` line (since the remote URL is now per-worktree too), and drop the `gh auth logout` line (the worktree variant never touches global gh config — the `agent-gh` wrapper passes `GH_TOKEN` per-process and leaves nothing on disk).
 
 #### 5. Verify isolation
 
@@ -419,12 +433,25 @@ git config --worktree user.name   # → implementer[bot]
 # Back in worktree A:
 git config --worktree user.name   # → still implementer[bot], unaffected
 
-# Confirm gh isolation too — each worktree's gh has its own config dir:
-ls "$(git -C ../my-repo-a rev-parse --absolute-git-dir)/gh-config/hosts.yml"   # exists
-ls "$(git -C ../my-repo-b rev-parse --absolute-git-dir)/gh-config/hosts.yml"   # exists, independent file
+# Confirm gh identity routing too — the wrapper mints a fresh token and
+# reports the bot account it was issued for:
+~/.scripts/agent-gh implementer auth status   # → Logged in to github.com as myagent-implementer[bot]
 ```
 
-If both worktrees report the right git identity and both have their own `hosts.yml`, you're isolated. Inside a Claude Code session launched via the shell function from step 3, `gh auth status` will report the per-worktree config dir, confirming end-to-end that tool subprocesses are reading the bot's auth and not your personal one.
+If both worktrees report the right git identity and `agent-gh implementer auth status` reports the implementer bot, you're isolated end-to-end. `gh` calls in worktree mode no longer touch shared state, so there's no `hosts.yml` to inspect — each call brings its own token and exits.
+
+### Multi-agent git routing in worktree mode
+
+If your worktree-mode setup has three or more agents that all commit (not just one implementer), you'll want the same prefix-based dispatch the basic mode uses for `git commit*` / `git push*` — otherwise every commit goes out as `implementer[bot]` regardless of who ran it. The basic-mode README sketches this under [Extending dispatch to more agents](#extending-dispatch-to-more-agents).
+
+To reuse it in worktree mode, copy `agent-git-setup-dispatch.sh` into `~/.scripts/` and change the final `exec` line to point at the worktree variant (one-line change):
+
+```diff
+-exec ~/.scripts/agent-git-setup.sh "$agent" "$CLAUDE_PROJECT_DIR"
++exec ~/.scripts/agent-git-setup-worktree.sh "$agent" "$CLAUDE_PROJECT_DIR"
+```
+
+Then wire the `git commit*` / `git push*` hooks at the dispatch script instead of at the worktree setup script directly. Treat this as a future-enhancement hint, not a default — most worktree-mode users have one committing agent and don't need it.
 
 ### Same identity vs. different identities across worktrees
 

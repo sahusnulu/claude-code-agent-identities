@@ -12,12 +12,10 @@
 #     shared .git/config. Requires `extensions.worktreeConfig=true` on the
 #     repo (set once; see README).
 #   - The remote URL is set per-worktree too (it's a shared key by default).
-#   - gh is authenticated into a per-worktree `GH_CONFIG_DIR` at
-#     <git-dir>/gh-config rather than the shared ~/.config/gh. The
-#     companion `claude` shell wrapper (see README) points GH_CONFIG_DIR
-#     at this same path before launching Claude Code, so tool subprocesses
-#     inherit it and `gh` reads the per-worktree hosts.yml natively — no
-#     PATH shim or env-var smuggling required.
+#   - gh is not touched here at all. In worktree mode `gh` calls go through
+#     the per-call `agent-gh` wrapper (see README), which mints a fresh
+#     installation token per invocation and execs gh with GH_TOKEN set —
+#     no persistent gh auth state to race on between parallel sessions.
 #
 # Usage: agent-git-setup-worktree.sh <agent-name> [/path/to/worktree]
 
@@ -108,25 +106,5 @@ fi
 EOF
 chmod 700 "$HELPER_PATH"
 git -C "$REPO_PATH" config --worktree credential.helper "!$HELPER_PATH"
-
-# Per-worktree gh auth via GH_CONFIG_DIR. Each worktree gets its own
-# hosts.yml; gh reads it natively, no wrapper involved. The launch-time
-# `claude` shell function (see README) is responsible for exporting
-# GH_CONFIG_DIR to the same path before claude starts, so tool subprocesses
-# inherit it.
-GH_DIR="$GIT_DIR/gh-config"
-mkdir -p "$GH_DIR"
-chmod 700 "$GH_DIR"
-printf '%s' "$TOKEN" | GH_CONFIG_DIR="$GH_DIR" gh auth login --with-token --hostname github.com
-
-# Sanity-check that this Claude Code session was launched with a matching
-# GH_CONFIG_DIR. If it wasn't, gh tool calls will read the user's own
-# ~/.config/gh instead and silently go out under the wrong identity.
-if [ "${GH_CONFIG_DIR:-}" != "$GH_DIR" ]; then
-  echo "WARNING: GH_CONFIG_DIR in this Claude Code env is '${GH_CONFIG_DIR:-<unset>}'," >&2
-  echo "         but the worktree's gh config lives at '$GH_DIR'." >&2
-  echo "         gh tool calls will not use the bot identity until you" >&2
-  echo "         relaunch claude with the shell wrapper from the README." >&2
-fi
 
 echo "Agent git identity configured (worktree-scoped): $AGENT_NAME (${APP_SLUG}[bot])"
