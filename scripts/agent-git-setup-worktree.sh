@@ -1,8 +1,8 @@
 #!/bin/bash
 # Worktree-safe variant of agent-git-setup.sh.
 #
-# Same flow — mint a short-lived GitHub App installation token, configure
-# git + gh to act as the named bot — but scoped so parallel Claude Code
+# Same flow: mint a short-lived GitHub App installation token, configure
+# git + gh to act as the named bot, but scoped so parallel Claude Code
 # sessions in different worktrees of the same repo don't clobber each
 # other's identity.
 #
@@ -14,7 +14,7 @@
 #   - The remote URL is set per-worktree too (it's a shared key by default).
 #   - gh is not touched here at all. In worktree mode `gh` calls go through
 #     the per-call `agent-gh` wrapper (see README), which mints a fresh
-#     installation token per invocation and execs gh with GH_TOKEN set —
+#     installation token per invocation and execs gh with GH_TOKEN set;
 #     no persistent gh auth state to race on between parallel sessions.
 #
 # Usage: agent-git-setup-worktree.sh <agent-name> [/path/to/worktree]

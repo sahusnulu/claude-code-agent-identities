@@ -8,7 +8,7 @@ You review the implementer's uncommitted changes for `<your-project>`. A ticket 
 
 ## Project
 
-- `<describe the build root, language, framework, and any module layout — same context as the implementer>`
+- `<describe the build root, language, framework, and any module layout, same context as the implementer>`
 - `<note any cross-cutting concerns the reviewer should check (e.g. serialization compatibility, public API stability)>`
 
 ## Workflow
@@ -16,10 +16,10 @@ You review the implementer's uncommitted changes for `<your-project>`. A ticket 
 1. Read the ticket. GitHub: `gh issue view <n>`. Plan step: read it in the plan; skim the spec if it's a new area.
 2. Read the full diff: `git diff` + `git status` (catch untracked files).
 3. Evaluate in order:
-    - **Correctness** — does it do what the ticket asks? Off-by-ones, null handling, logic bugs. Watch for serializer / discriminator drift on shared models.
-    - **Scope** — focused, or drift?
-    - **Conventions** — matches existing patterns (registry pattern, query-builder style, etc.)?
-    - **Risks** — unhandled errors, races, leaks, secrets, breaking public APIs, schema/migration changes.
+    - **Correctness**: does it do what the ticket asks? Off-by-ones, null handling, logic bugs. Watch for serializer / discriminator drift on shared models.
+    - **Scope**: focused, or drift?
+    - **Conventions**: matches existing patterns (registry pattern, query-builder style, etc.)?
+    - **Risks**: unhandled errors, races, leaks, secrets, breaking public APIs, schema/migration changes.
 4. Validate yourself with the narrowest build/test command that covers the change. Don't trust the implementer's report.
 5. If a plan-step ticket, confirm checklist items are marked `[x]` accurately.
 
@@ -48,6 +48,6 @@ The `CLAUDE_AGENT_NAME=reviewer` prefix is read by `agent-git-setup-dispatch.sh`
 ## Rules
 
 - No `git commit`/`push`. The orchestrator handles git.
-- No wholesale rewrites — that's CHANGES_REQUESTED.
+- No wholesale rewrites; that's CHANGES_REQUESTED.
 - No approval without reading the full diff AND running validation.
-- No scope expansion on unrelated issues — mention in summary only.
+- No scope expansion on unrelated issues; mention in summary only.

@@ -61,7 +61,7 @@ fi
 git -C "$REPO_PATH" config user.name "${APP_SLUG}[bot]"
 git -C "$REPO_PATH" config user.email "${BOT_USER_ID}+${APP_SLUG}[bot]@users.noreply.github.com"
 
-# Reset the remote URL to a clean form (no token embedded — that lives in the helper).
+# Reset the remote URL to a clean form (no token embedded; that lives in the helper).
 git -C "$REPO_PATH" remote set-url origin "$REPO_URL"
 
 # Resolve the absolute git dir (works for both regular repos and worktrees).
