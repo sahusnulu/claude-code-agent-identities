@@ -53,6 +53,7 @@ The directory layout in this repo mirrors the production layout above, so each f
 | `scripts/agent-gh` | `~/.scripts/agent-gh` (only if running [parallel sessions across worktrees](#running-parallel-claude-code-sessions-across-worktrees)) |
 | `agent-envs/implementer.env.example` | `~/.secrets/agents/implementer.env` (drop the `.example` suffix, fill in real values) |
 | `agent-envs/reviewer.env.example` | `~/.secrets/agents/reviewer.env` |
+| `.claude/notify.sh` | `~/.claude/notify.sh` for global use, or leave it in `<your-repo>/.claude/notify.sh` for per-project use; see [Optional: per-session notifications](#optional-per-session-notifications) |
 
 The subagent `.md` files have `<your-project>` placeholders for the build root, language, and module layout. Fill those in when you copy.
 
@@ -494,6 +495,76 @@ Approach 1 is the cleanest target architecturally - no shared state means no rac
 See [Where to remind the agent to prefix](#where-to-remind-the-agent-to-prefix) for the general guidance. The CLAUDE.md placement is **mandatory** for agent teams - the lead has no subagent definition appended to its context, and per the [agent teams docs](https://code.claude.com/docs/en/agent-teams), CLAUDE.md is the only place a prefix instruction will reach it.
 
 > **Bottom line:** until the per-session-credential rewrite (or worktree-per-teammate automation) lands, treat this setup as **incompatible with parallel-committing agent teams**. Teams where only the lead writes, or teams running sequentially, will work. Anything else risks silent identity mix-ups in your git history.
+
+---
+
+## Optional: per-session notifications
+
+`notify.sh` is a small macOS notification hook that fires on `Stop` (session finished) and `PermissionRequest` (Claude is waiting on you to approve a tool). It pulls the worktree/repo basename out of the hook payload and uses it as the notification subtitle, so parallel sessions in different worktrees have different notifications.
+
+You can wire it up two ways:
+
+- **Globally** (recommended) - install the script into `~/.claude/` and reference it from `~/.claude/settings.json`. Notifications fire for every Claude Code session on this machine, in any project.
+- **Per-project** - drop the script anywhere inside the repo (`.claude/notify.sh` works) and reference it from `<your-repo>/.claude/settings.json`. Notifications fire only for sessions in that repo. Useful if you only want them for noisy projects, or if teammates check in the same hook.
+
+### Global install
+
+```bash
+cp .claude/notify.sh ~/.claude/
+chmod +x ~/.claude/notify.sh
+```
+
+Then add to `~/.claude/settings.json` (merging with whatever's already there):
+
+```jsonc
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash /Users/<you>/.claude/notify.sh" }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash /Users/<you>/.claude/notify.sh" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+### Per-project install
+
+Reference the in-repo copy directly from `<your-repo>/.claude/settings.json` - no need to copy anywhere:
+
+```jsonc
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash $CLAUDE_PROJECT_DIR/.claude/notify.sh" }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash $CLAUDE_PROJECT_DIR/.claude/notify.sh" }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Hooks from `~/.claude/settings.json` and `<your-repo>/.claude/settings.json` are merged, so a global notification hook and a per-project teardown hook (or vice versa) coexist fine - both fire at end-of-session.
+
+Requires `jq` (the script parses the hook payload off stdin). macOS-only as written (`osascript` + `afplay`).
 
 ---
 
